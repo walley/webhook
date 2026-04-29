@@ -1,5 +1,5 @@
 # 1. Set your secret (must match the one used by your Rust app)
-SECRET="kokot"
+SECRET="Kokot1234x,"
 
 # 2. Define the payload
 PAYLOAD='{"ref": "refs/heads/main"}'
@@ -8,7 +8,7 @@ PAYLOAD='{"ref": "refs/heads/main"}'
 SIGNATURE=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$SECRET" | sed 's/^.*= //')
 
 # 4. Fire the request
-curl -v -X POST http://localhost:3000/webhook \
+curl -v -X POST http://192.168.13.22:3000/webhook \
   -H "X-GitHub-Event: push" \
   -H "X-Hub-Signature-256: sha256=$SIGNATURE" \
   -H "Content-Type: application/json" \

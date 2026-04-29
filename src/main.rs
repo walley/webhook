@@ -58,6 +58,7 @@ async fn webhook_handler(
 
     // A. Verify Signature (Must be done on raw bytes)
     if !verify_signature(&state.webhook_secret, &headers, &body) {
+        eprintln!("Signature error.");
         return StatusCode::FORBIDDEN;
     }
 
