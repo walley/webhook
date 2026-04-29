@@ -1,6 +1,4 @@
 
-***
-
 # GitHub Webhook Listener in Rust
 
 A lightweight, high-performance web server written in Rust using [Axum](https://github.com/tokio-rs/axum) that listens for GitHub webhooks and executes local bash scripts in response.
