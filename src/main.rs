@@ -7,7 +7,8 @@ use axum::{
 };
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
-//use std::process::Command;
+use serde::Deserialize;
+use std::sync::Arc;
 use tokio::process::Command as AsyncCommand;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -16,11 +17,23 @@ struct AppState {
     webhook_secret: String,
 }
 
+// 1. Define the structure of the data you want to extract
+#[derive(Deserialize, Debug)]
+struct PushEvent {
+    #[serde(rename = "ref")]
+    reference: String,
+    repository: Repository,
+}
+
+#[derive(Deserialize, Debug)]
+struct Repository {
+    name: String,
+}
+
 #[tokio::main]
 async fn main() {
-    // Load your secret from an environment variable (Required for security!)
     let secret = std::env::var("WEBHOOK_SECRET").expect("WEBHOOK_SECRET must be set");
-    let shared_state = std::sync::Arc::new(AppState { webhook_secret: secret });
+    let shared_state = Arc::new(AppState { webhook_secret: secret });
 
     let app = Router::new()
         .route("/webhook", post(webhook_handler))
@@ -33,49 +46,47 @@ async fn main() {
 
 async fn webhook_handler(
     headers: HeaderMap,
-    State(state): State<std::sync::Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     body: Bytes,
 ) -> StatusCode {
-    // 1. Verify Signature
+    // A. Verify Signature (Must be done on raw bytes)
     if !verify_signature(&state.webhook_secret, &headers, &body) {
         return StatusCode::FORBIDDEN;
     }
 
-    // 2. Identify Event Type and create an OWNED string
-    // By calling .to_string(), we create a copy that can live inside the spawn block
+    // B. Identify Event
     let event = headers.get("X-GitHub-Event")
         .and_then(|v| v.to_str().ok())
-        .unwrap_or("unknown")
-        .to_string(); 
+        .unwrap_or("unknown");
 
-    println!("Received event: {}", event);
+    println!("DEBUG JSON: {}", String::from_utf8_lossy(&body));
 
-    // 3. Map Event to Script
-    let script_path = match event.as_str() {
-        "push" => Some("/usr/local/bin/github-push.sh"),
-        "pull_request" => Some("/usr/local/bin/github-pr.sh"),
-        _ => None,
-    };
-
-    if let Some(script) = script_path {
-        let script = script.to_string(); // Make script path owned too!
-        
-        // Run the script asynchronously
-        tokio::spawn(async move {
-            let output = AsyncCommand::new(script)
-                .arg(&event) // Pass the owned string
-                .output()
-                .await;
-
-            match output {
-                Ok(out) => println!("Script executed. Status: {}", out.status),
-                Err(e) => eprintln!("Failed to execute script: {}", e),
+    // C. Parse JSON based on event
+    match event {
+        "push" => {
+            // Parse the raw bytes into your struct
+            if let Ok(payload) = serde_json::from_slice::<PushEvent>(&body) {
+                println!("Push to {} in repo {}", payload.reference, payload.repository.name);
+                
+                // You can now pass this info to your script
+                run_script("/usr/local/bin/github-push.sh", &payload.repository.name).await;
+            } else {
+                eprintln!("Failed to parse push payload");
             }
-        });
-        StatusCode::OK
-    } else {
-        StatusCode::NO_CONTENT
+        }
+        _ => println!("Received unhandled event: {}", event),
     }
+
+    StatusCode::OK
+}
+
+// Helper to run scripts
+async fn run_script(script: &str, arg: &str) {
+    let script = script.to_string();
+    let arg = arg.to_string();
+    tokio::spawn(async move {
+        let _ = AsyncCommand::new(script).arg(arg).output().await;
+    });
 }
 
 fn verify_signature(secret: &str, headers: &HeaderMap, body: &[u8]) -> bool {
@@ -83,15 +94,8 @@ fn verify_signature(secret: &str, headers: &HeaderMap, body: &[u8]) -> bool {
         Some(s) => s.to_str().unwrap_or(""),
         None => return false,
     };
-
-    // GitHub sends signature as "sha256=..."
     let signature = signature.strip_prefix("sha256=").unwrap_or("");
-    
-    let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
+    let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC error");
     mac.update(body);
-    
-    let result = mac.finalize().into_bytes();
-    let hex_result = hex::encode(result);
-
-    hex_result == signature
+    hex::encode(mac.finalize().into_bytes()) == signature
 }
