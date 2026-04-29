@@ -49,6 +49,13 @@ async fn webhook_handler(
     State(state): State<Arc<AppState>>,
     body: Bytes,
 ) -> StatusCode {
+
+  let allowed_branches = [
+    "refs/heads/main",
+    "refs/heads/master",
+    "refs/heads/github"
+  ];
+
     // A. Verify Signature (Must be done on raw bytes)
     if !verify_signature(&state.webhook_secret, &headers, &body) {
         return StatusCode::FORBIDDEN;
@@ -61,15 +68,19 @@ async fn webhook_handler(
 
     println!("DEBUG JSON: {}", String::from_utf8_lossy(&body));
 
+
     // C. Parse JSON based on event
     match event {
         "push" => {
             // Parse the raw bytes into your struct
             if let Ok(payload) = serde_json::from_slice::<PushEvent>(&body) {
                 println!("Push to {} in repo {}", payload.reference, payload.repository.name);
-                
                 // You can now pass this info to your script
-                run_script("/usr/local/bin/github-push.sh", &payload.repository.name).await;
+                let is_prod_branch = allowed_branches.contains(&payload.reference.as_str());
+
+                if is_prod_branch {
+                  run_script("/usr/local/bin/github-push.sh", &payload.repository.name).await;
+                }
             } else {
                 eprintln!("Failed to parse push payload");
             }
