@@ -1,4 +1,3 @@
-
 # GitHub Webhook Listener in Rust
 
 A lightweight, high-performance web server written in Rust using [Axum](https://github.com/tokio-rs/axum) that listens for GitHub webhooks and executes local bash scripts in response.
@@ -85,5 +84,6 @@ sudo systemctl start github-webhook
 **Always** use a Webhook Secret. GitHub generates a signature using this secret, which allows our server to verify that the incoming payload is authentic and not a malicious request from an attacker. Ensure your secret is long, random, and not hardcoded in your source files.
 
 ## License
-read LICENSE
+read LICENSE file
+
 
