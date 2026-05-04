@@ -11,7 +11,34 @@ use hmac::{Hmac, Mac};
 use serde::Deserialize;
 use sha2::Sha256;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::process::Command as AsyncCommand;
+
+use log::{debug, error, info, warn, LevelFilter};
+use syslog::{BasicLogger, Facility, Formatter3164};
+
+const FACILITY: Facility = Facility::LOG_LOCAL6;
+
+fn timestamp() -> u64 {
+  SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .expect("Time went backwards")
+    .as_secs()
+}
+
+fn wlog(level: &str, message: &str) {
+  match level.to_lowercase().as_str() {
+    "info" => info!("{}", message),
+    "warn" | "warning" => warn!("{}", message),
+    "error" => error!("{}", message),
+    "debug" => debug!("{}", message),
+    _ => info!("{}", message), // default
+  }
+
+  let ts = timestamp();
+  let full_msg = format!("{} {} {}", ts, level, message);
+  println!("{}", full_msg);
+}
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -34,6 +61,20 @@ struct Repository {
 
 #[tokio::main]
 async fn main() {
+  let formatter = Formatter3164 {
+    facility: FACILITY,
+    hostname: None,
+    process: "rust-syslog-demo".into(),
+    pid: 0,
+  };
+
+  // Connect logger to syslog
+  let logger = syslog::unix(formatter).expect("Could not connect to syslog");
+
+  // Install logger globally
+  log::set_boxed_logger(Box::new(BasicLogger::new(logger))).expect("Could not set logger");
+  log::set_max_level(LevelFilter::Debug);
+
   let secret = std::env::var("WEBHOOK_SECRET").expect("WEBHOOK_SECRET must be set");
   let shared_state = Arc::new(AppState {
     webhook_secret: secret,
@@ -44,7 +85,7 @@ async fn main() {
     .with_state(shared_state);
 
   let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-  println!("Server listening on http://0.0.0.0:3000");
+  wlog("info", "Server listening on http://0.0.0.0:3000");
   axum::serve(listener, app).await.unwrap();
 }
 
@@ -57,7 +98,7 @@ async fn webhook_handler(
 
   // A. Verify Signature (Must be done on raw bytes)
   if !verify_signature(&state.webhook_secret, &headers, &body) {
-    eprintln!("Signature error.");
+    wlog("info", "Signature error.");
     return StatusCode::FORBIDDEN;
   }
 
@@ -68,15 +109,19 @@ async fn webhook_handler(
     .unwrap_or("unknown");
 
   println!("DEBUG JSON: {}", String::from_utf8_lossy(&body));
+  wlog("debug", "Received a new request");
 
   // C. Parse JSON based on event
   match event {
     "push" => {
       // Parse the raw bytes into your struct
       if let Ok(payload) = serde_json::from_slice::<PushEvent>(&body) {
-        println!(
-          "Push to {} in repo {}",
-          payload.reference, payload.repository.name
+        wlog(
+          "debug",
+          &format!(
+            "Push to {} in repo {}",
+            payload.reference, payload.repository.name,
+          ),
         );
         // You can now pass this info to your script
         let is_prod_branch = allowed_branches.contains(&payload.reference.as_str());
@@ -85,10 +130,10 @@ async fn webhook_handler(
           run_script("/usr/local/bin/github-push.sh", &payload.repository.name).await;
         }
       } else {
-        eprintln!("Failed to parse push payload");
+        wlog("debug", "Unknown push event");
       }
     }
-    _ => println!("Received unhandled event: {}", event),
+    _ => wlog("debug", &format!("Received unhandled event: {}", event)),
   }
 
   StatusCode::OK
