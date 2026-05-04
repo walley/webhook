@@ -6,7 +6,8 @@ After=network.target
 ExecStart=/usr/local/bin/github-webhook
 Environment=WEBHOOK_SECRET=your_very_secure_random_string
 Restart=always
-User=your-user
+User=www-data
+PrivateTmp=false
 
 [Install]
 WantedBy=multi-user.target
