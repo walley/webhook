@@ -1,0 +1,4 @@
+# /etc/default/github-webhook
+WEBHOOK_SECRET="your_actual_secret_here"
+USER="www-data
+
