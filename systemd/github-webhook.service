@@ -1,0 +1,12 @@
+[Unit]
+Description=GitHub Webhook Daemon
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/github-webhook
+Environment=WEBHOOK_SECRET=your_very_secure_random_string
+Restart=always
+User=your-user
+
+[Install]
+WantedBy=multi-user.target
