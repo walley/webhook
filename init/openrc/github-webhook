@@ -1,0 +1,24 @@
+#!/sbin/openrc-run
+
+name="github-webhook"
+description="GitHub Webhook Listener"
+
+# The path to your binary
+command="/usr/local/bin/github-webhook"
+# Run as non-privileged user
+command_user="www-data"
+# OpenRC handles backgrounding automatically
+command_background="yes"
+# Where to store the PID file
+pidfile="/run/${name}.pid"
+
+# Ensure networking is up before starting
+depend() {
+    need net
+}
+
+# This runs just before the command is executed
+start_pre() {
+    # Export the secret from the config file into the process environment
+    export WEBHOOK_SECRET="${WEBHOOK_SECRET}"
+}

@@ -1,0 +1,3 @@
+# /etc/conf.d/github-webhook
+# This file is sourced by the init script
+WEBHOOK_SECRET="your_actual_secret_here"
