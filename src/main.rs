@@ -7,6 +7,7 @@ use axum::{
   routing::post,
   Router,
 };
+
 use hmac::{Hmac, Mac};
 use serde::Deserialize;
 use sha2::Sha256;
@@ -27,17 +28,24 @@ fn timestamp() -> u64 {
 }
 
 fn wlog(level: &str, message: &str) {
-  match level.to_lowercase().as_str() {
-    "info" => info!("{}", message),
-    "warn" | "warning" => warn!("{}", message),
-    "error" => error!("{}", message),
-    "debug" => debug!("{}", message),
-    _ => info!("{}", message), // default
-  }
+  // Convert to String inside here so we own the data before passing it to the thread
+  let level = level.to_string();
+  let message = message.to_string();
 
-  let ts = timestamp();
-  let full_msg = format!("{} {} {}", ts, level, message);
-  println!("{}", full_msg);
+  tokio::task::spawn_blocking(move || {
+    // 1. Perform the logging
+    match level.as_str() {
+      "info" => info!("{}", message),
+      "warn" | "warning" => warn!("{}", message),
+      "error" => error!("{}", message),
+      "debug" => debug!("{}", message),
+      _ => info!("{}", message),
+    }
+
+    // 2. Perform the println!
+    let ts = timestamp();
+    println!("{} {} {}", ts, level, message);
+  });
 }
 
 type HmacSha256 = Hmac<Sha256>;
@@ -57,36 +65,6 @@ struct PushEvent {
 #[derive(Deserialize, Debug)]
 struct Repository {
   name: String,
-}
-
-#[tokio::main]
-async fn main() {
-  let formatter = Formatter3164 {
-    facility: FACILITY,
-    hostname: None,
-    process: "rust-syslog-demo".into(),
-    pid: 0,
-  };
-
-  // Connect logger to syslog
-  let logger = syslog::unix(formatter).expect("Could not connect to syslog");
-
-  // Install logger globally
-  log::set_boxed_logger(Box::new(BasicLogger::new(logger))).expect("Could not set logger");
-  log::set_max_level(LevelFilter::Debug);
-
-  let secret = std::env::var("WEBHOOK_SECRET").expect("WEBHOOK_SECRET must be set");
-  let shared_state = Arc::new(AppState {
-    webhook_secret: secret,
-  });
-
-  let app = Router::new()
-    .route("/webhook", post(webhook_handler))
-    .with_state(shared_state);
-
-  let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-  wlog("info", "Server listening on http://0.0.0.0:3000");
-  axum::serve(listener, app).await.unwrap();
 }
 
 async fn webhook_handler(
@@ -157,4 +135,34 @@ fn verify_signature(secret: &str, headers: &HeaderMap, body: &[u8]) -> bool {
   let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC error");
   mac.update(body);
   hex::encode(mac.finalize().into_bytes()) == signature
+}
+
+#[tokio::main]
+async fn main() {
+  let formatter = Formatter3164 {
+    facility: FACILITY,
+    hostname: None,
+    process: "github-webhook".into(),
+    pid: 0,
+  };
+
+  // Connect logger to syslog
+  let logger = syslog::unix(formatter).expect("Could not connect to syslog");
+
+  // Install logger globally
+  log::set_boxed_logger(Box::new(BasicLogger::new(logger))).expect("Could not set logger");
+  log::set_max_level(LevelFilter::Debug);
+
+  let secret = std::env::var("WEBHOOK_SECRET").expect("WEBHOOK_SECRET must be set");
+  let shared_state = Arc::new(AppState {
+    webhook_secret: secret,
+  });
+
+  let app = Router::new()
+    .route("/webhook", post(webhook_handler))
+    .with_state(shared_state);
+
+  let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
+  wlog("info", "Server listening on http://0.0.0.0:3000");
+  axum::serve(listener, app).await.unwrap();
 }
