@@ -11,6 +11,7 @@ use axum::{
 use hmac::{Hmac, Mac};
 use serde::Deserialize;
 use sha2::Sha256;
+use std::process;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::process::Command as AsyncCommand;
@@ -147,7 +148,10 @@ async fn main() {
   };
 
   // Connect logger to syslog
-  let logger = syslog::unix(formatter).expect("Could not connect to syslog");
+  let logger = syslog::unix(formatter).unwrap_or_else(|e| {
+    eprintln!("Error: Could not connect to syslog: {}", e);
+    process::exit(2);
+  });
 
   // Install logger globally
   log::set_boxed_logger(Box::new(BasicLogger::new(logger))).expect("Could not set logger");
