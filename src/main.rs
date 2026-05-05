@@ -1,6 +1,12 @@
 //walley 2026
 
-use axum::{body::Bytes,extract::State,http::{HeaderMap, StatusCode},routing::post,Router,};
+use axum::{
+  body::Bytes,
+  extract::State,
+  http::{HeaderMap, StatusCode},
+  routing::post,
+  Router,
+};
 use hmac::{Hmac, Mac};
 use log::{debug, error, info, warn, LevelFilter};
 use serde::Deserialize;
@@ -98,6 +104,7 @@ async fn webhook_handler(
         let is_prod_branch = allowed_branches.contains(&payload.reference.as_str());
 
         if is_prod_branch {
+          wlog("info", "Executing hook ...");
           run_script("/usr/local/bin/github-push.sh", &payload.repository.name).await;
         }
       } else {
