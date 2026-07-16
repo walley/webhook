@@ -84,7 +84,7 @@ sudo systemctl start github-webhook
 **Always** use a Webhook Secret. GitHub generates a signature using this secret, which allows our server to verify that the incoming payload is authentic and not a malicious request from an attacker. Ensure your secret is long, random, and not hardcoded in your source files.
 
 ## License
-read LICENSE file carefuly
+read LICENSE file very carefuly
 
 
 
