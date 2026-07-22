@@ -1,2 +1,2 @@
-rustfmt --edition 2021 src/main.rs
+rustfmt --edition 2024 src/main.rs
 cargo build --release

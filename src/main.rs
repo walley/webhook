@@ -1,14 +1,14 @@
 //walley 2026
 
 use axum::{
+  Router,
   body::Bytes,
   extract::State,
   http::{HeaderMap, StatusCode},
   routing::post,
-  Router,
 };
 use hmac::{Hmac, Mac};
-use log::{debug, error, info, warn, LevelFilter};
+use log::{LevelFilter, debug, error, info, warn};
 use serde::Deserialize;
 use sha2::Sha256;
 use std::process;
@@ -86,7 +86,7 @@ async fn webhook_handler(
     .unwrap_or("unknown");
 
   println!("DEBUG JSON: {}", String::from_utf8_lossy(&body));
-  wlog("debug", "Received a new request");
+  wlog("info", "Received a new request");
 
   // C. Parse JSON based on event
   match event {
@@ -94,7 +94,7 @@ async fn webhook_handler(
       // Parse the raw bytes into your struct
       if let Ok(payload) = serde_json::from_slice::<PushEvent>(&body) {
         wlog(
-          "debug",
+          "info",
           &format!(
             "Push to {} in repo {}",
             payload.reference, payload.repository.name,
@@ -106,12 +106,14 @@ async fn webhook_handler(
         if is_prod_branch {
           wlog("info", "Executing hook ...");
           run_script("/usr/local/bin/github-push.sh", &payload.repository.name).await;
+        } else {
+          wlog("info", "Forbiden branch");
         }
       } else {
-        wlog("debug", "Unknown push event");
+        wlog("info", "Unknown push event");
       }
     }
-    _ => wlog("debug", &format!("Received unhandled event: {}", event)),
+    _ => wlog("info", &format!("Received unhandled event: {}", event)),
   }
 
   StatusCode::OK
