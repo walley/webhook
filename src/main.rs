@@ -111,14 +111,32 @@ async fn webhook_handler(
         }
       } else {
         let ts = timestamp();
-        let path = format!("/tmp/{}.payload", ts);
-        let payload = body.to_vec();
+let filename = format!("/tmp/{}.payload", ts);
 
-        if let Err(err) = std::fs::write(&path, &payload) {
-          wlog("error", &format!("Failed to dump unknown push payload to {}: {}", path, err));
-        } else {
-          wlog("info", &format!("Unknown push event — dumped payload to {}", path));
-        }
+// Serialize headers to a simple text block (mark non-UTF8 values)
+let header_dump = headers
+  .iter()
+  .map(|(k, v)| format!("{}: {}", k.as_str(), v.to_str().unwrap_or("<non-utf8>")))
+  .collect::<Vec<_>>()
+  .join("\n");
+
+// Take ownership of the raw body bytes
+let body_bytes = body.to_vec();
+
+tokio::task::spawn_blocking(move || {
+  use std::io::Write;
+  match std::fs::File::create(&filename) {
+    Ok(mut f) => {
+      let _ = writeln!(f, "Timestamp: {}\n\nHeaders:\n{}\n\nBody (raw bytes):\n", ts, header_dump);
+      let _ = f.write_all(&body_bytes);
+    }
+    Err(e) => {
+      eprintln!("Failed to create payload file {}: {}", filename, e);
+    }
+  }
+});
+
+
       }
     }
     _ => wlog("info", &format!("Received unhandled event: {}", event)),
