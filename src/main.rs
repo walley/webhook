@@ -123,6 +123,9 @@ async fn webhook_handler(
         // Take ownership of the raw body bytes
         let body_bytes = body.to_vec();
 
+        // Clone filename before moving it into the closure
+        let filename_for_logging = filename.clone();
+
         tokio::task::spawn_blocking(move || {
           use std::io::Write;
           match std::fs::File::create(&filename) {
@@ -141,7 +144,7 @@ async fn webhook_handler(
           }
         });
 
-        wlog("info", &format!("Unknown push event — dumped payload to {}", filename));
+        wlog("info", &format!("Unknown push event — dumped payload to {}", filename_for_logging));
       }
     }
     _ => wlog("info", &format!("Received unhandled event: {}", event)),
