@@ -110,7 +110,15 @@ async fn webhook_handler(
           wlog("info", "Forbiden branch");
         }
       } else {
-        wlog("info", "Unknown push event");
+        let ts = timestamp();
+        let path = format!("/tmp/{}.payload", ts);
+        let payload = body.to_vec();
+
+        if let Err(err) = std::fs::write(&path, &payload) {
+          wlog("error", &format!("Failed to dump unknown push payload to {}: {}", path, err));
+        } else {
+          wlog("info", &format!("Unknown push event — dumped payload to {}", path));
+        }
       }
     }
     _ => wlog("info", &format!("Received unhandled event: {}", event)),
