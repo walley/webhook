@@ -111,32 +111,37 @@ async fn webhook_handler(
         }
       } else {
         let ts = timestamp();
-let filename = format!("/tmp/{}.payload", ts);
+        let filename = format!("/tmp/{}.payload", ts);
 
-// Serialize headers to a simple text block (mark non-UTF8 values)
-let header_dump = headers
-  .iter()
-  .map(|(k, v)| format!("{}: {}", k.as_str(), v.to_str().unwrap_or("<non-utf8>")))
-  .collect::<Vec<_>>()
-  .join("\n");
+        // Serialize headers to a simple text block (mark non-UTF8 values)
+        let header_dump = headers
+          .iter()
+          .map(|(k, v)| format!("{}: {}", k.as_str(), v.to_str().unwrap_or("<non-utf8>")))
+          .collect::<Vec<_>>()
+          .join("\n");
 
-// Take ownership of the raw body bytes
-let body_bytes = body.to_vec();
+        // Take ownership of the raw body bytes
+        let body_bytes = body.to_vec();
 
-tokio::task::spawn_blocking(move || {
-  use std::io::Write;
-  match std::fs::File::create(&filename) {
-    Ok(mut f) => {
-      let _ = writeln!(f, "Timestamp: {}\n\nHeaders:\n{}\n\nBody (raw bytes):\n", ts, header_dump);
-      let _ = f.write_all(&body_bytes);
-    }
-    Err(e) => {
-      eprintln!("Failed to create payload file {}: {}", filename, e);
-    }
-  }
-});
+        tokio::task::spawn_blocking(move || {
+          use std::io::Write;
+          match std::fs::File::create(&filename) {
+            Ok(mut f) => {
+              let _ = writeln!(
+                f,
+                "Timestamp: {}\n\nHeaders:\n{}\n\nBody (raw bytes):\n",
+                ts,
+                header_dump
+              );
+              let _ = f.write_all(&body_bytes);
+            }
+            Err(e) => {
+              eprintln!("Failed to create payload file {}: {}", filename, e);
+            }
+          }
+        });
 
-
+        wlog("info", &format!("Unknown push event — dumped payload to {}", filename));
       }
     }
     _ => wlog("info", &format!("Received unhandled event: {}", event)),
