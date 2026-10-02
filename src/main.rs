@@ -85,14 +85,18 @@ async fn webhook_handler(
     .and_then(|v| v.to_str().ok())
     .unwrap_or("unknown");
 
-  println!("DEBUG JSON: {}", String::from_utf8_lossy(&body));
+  // C. Decode form-encoded deliveries. Signature above was verified against the
+  //    raw bytes, so decoding happens only after that check has passed.
+  let payload = decode_form_payload(&headers, &body).unwrap_or_else(|| body.to_vec());
+
+  println!("DEBUG JSON: {}", String::from_utf8_lossy(&payload));
   wlog("info", "Received a new request");
 
-  // C. Parse JSON based on event
+  // D. Parse JSON based on event
   match event {
     "push" => {
-      // Parse the raw bytes into your struct
-      if let Ok(payload) = serde_json::from_slice::<PushEvent>(&body) {
+      // Parse the decoded bytes into your struct
+      if let Ok(payload) = serde_json::from_slice::<PushEvent>(&payload) {
         wlog(
           "info",
           &format!(
@@ -120,8 +124,8 @@ async fn webhook_handler(
           .collect::<Vec<_>>()
           .join("\n");
 
-        // Take ownership of the raw body bytes
-        let body_bytes = body.to_vec();
+        // Take ownership of the decoded body bytes
+        let body_bytes = payload;
 
         // Clone filename before moving it into the closure
         let filename_for_logging = filename.clone();
@@ -132,9 +136,8 @@ async fn webhook_handler(
             Ok(mut f) => {
               let _ = writeln!(
                 f,
-                "Timestamp: {}\n\nHeaders:\n{}\n\nBody (raw bytes):\n",
-                ts,
-                header_dump
+                "Timestamp: {}\n\nHeaders:\n{}\n\nBody (URL-decoded):\n",
+                ts, header_dump
               );
               let _ = f.write_all(&body_bytes);
             }
@@ -144,10 +147,25 @@ async fn webhook_handler(
           }
         });
 
-        wlog("info", &format!("Unknown push event — dumped payload to {}", filename_for_logging));
+        wlog(
+          "info",
+          &format!(
+            "Push event with unparseable payload — dumped to {}",
+            filename_for_logging
+          ),
+        );
       }
     }
-    _ => wlog("info", &format!("Received unhandled event: {}", event)),
+    _ => {
+      wlog(
+        "info",
+        &format!(
+          "Received unhandled event: {} | Payload: {}",
+          event,
+          String::from_utf8_lossy(&payload)
+        ),
+      );
+    }
   }
 
   StatusCode::OK
@@ -162,6 +180,27 @@ async fn run_script(script: &str, arg: &str) {
   });
 }
 
+// GitHub can deliver webhooks as application/x-www-form-urlencoded, in which
+// case the JSON arrives as a percent-encoded `payload` form field. Returns the
+// decoded JSON bytes, or None when the body is plain JSON.
+fn decode_form_payload(headers: &HeaderMap, body: &[u8]) -> Option<Vec<u8>> {
+  let is_form = headers
+    .get("content-type")
+    .and_then(|v| v.to_str().ok())
+    .is_some_and(|ct| ct.starts_with("application/x-www-form-urlencoded"));
+
+  // Only sniff the body when it is not declared as JSON. A raw JSON body may
+  // legitimately contain `&payload=` inside a string value, and parsing that
+  // would silently replace the real payload.
+  if !is_form && !body.starts_with(b"payload=") {
+    return None;
+  }
+
+  form_urlencoded::parse(body)
+    .find(|(key, _)| key == "payload")
+    .map(|(_, value)| value.into_owned().into_bytes())
+}
+
 fn verify_signature(secret: &str, headers: &HeaderMap, body: &[u8]) -> bool {
   let signature = match headers.get("X-Hub-Signature-256") {
     Some(s) => s.to_str().unwrap_or(""),
@@ -171,6 +210,97 @@ fn verify_signature(secret: &str, headers: &HeaderMap, body: &[u8]) -> bool {
   let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC error");
   mac.update(body);
   hex::encode(mac.finalize().into_bytes()) == signature
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use axum::http::HeaderValue;
+
+  fn headers(content_type: &str) -> HeaderMap {
+    let mut h = HeaderMap::new();
+    h.insert("content-type", HeaderValue::from_str(content_type).unwrap());
+    h
+  }
+
+  const FORM: &str = "application/x-www-form-urlencoded";
+
+  // Trimmed from a real GitHub push delivery that was dumped to /tmp
+  // undecoded: content-type form-urlencoded, event push, ref refs/heads/github.
+  // Note "Update+YO%21" -- GitHub encodes spaces as '+', so a decoder that
+  // only handles %XX would yield "Update+YO! to YO!".
+  const REAL_ENCODED: &str = "payload=%7B%22ref%22%3A%22refs%2Fheads%2Fgithub%22%2C%22repository%22%3A%7B%22name%22%3A%22kiscal%22%7D%2C%22message%22%3A%22Update+YO%21%22%7D";
+
+  #[test]
+  fn decodes_real_form_encoded_push_into_parseable_json() {
+    let out = decode_form_payload(&headers(FORM), REAL_ENCODED.as_bytes()).unwrap();
+    let json = String::from_utf8(out).unwrap();
+    assert_eq!(
+      json,
+      r#"{"ref":"refs/heads/github","repository":{"name":"kiscal"},"message":"Update YO!"}"#
+    );
+
+    // The decoded bytes must now satisfy the push parser, which is the whole
+    // point: before the fix this failed and got dumped to /tmp instead.
+    let parsed: PushEvent = serde_json::from_slice(json.as_bytes()).unwrap();
+    assert_eq!(parsed.reference, "refs/heads/github");
+    assert_eq!(parsed.repository.name, "kiscal");
+  }
+
+  #[test]
+  fn plus_is_decoded_as_space() {
+    let out = decode_form_payload(&headers(FORM), b"payload=a+b").unwrap();
+    assert_eq!(out, b"a b");
+  }
+
+  #[test]
+  fn leaves_plain_json_body_untouched() {
+    let body = br#"{"ref":"refs/heads/main","repository":{"name":"webhook"}}"#;
+    assert_eq!(
+      decode_form_payload(&headers("application/json"), body),
+      None
+    );
+  }
+
+  #[test]
+  fn does_not_extract_payload_from_inside_a_json_string() {
+    // A JSON body may contain "&payload=" in a value; treating it as a form
+    // field would silently swap the real payload for attacker-chosen data.
+    let body = br#"{"ref":"refs/heads/main","repository":{"name":"x&payload=evil"},"more":1}"#;
+    assert_eq!(
+      decode_form_payload(&headers("application/json"), body),
+      None
+    );
+
+    // A declared form content-type is authoritative: the body is read as a
+    // form, so `payload` is whatever follows that key. This cannot be abused
+    // because the signature is checked against the raw bytes first.
+    let forced = decode_form_payload(&headers(FORM), body).unwrap();
+    assert_eq!(String::from_utf8(forced).unwrap(), r#"evil"},"more":1}"#);
+  }
+
+  #[test]
+  fn returns_none_when_form_body_has_no_payload_key() {
+    assert_eq!(decode_form_payload(&headers(FORM), b"other=1"), None);
+  }
+
+  #[test]
+  fn signature_is_verified_against_raw_encoded_bytes() {
+    let secret = "Kokot1234x,";
+    let mut h = HeaderMap::new();
+    let sig = {
+      let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
+      mac.update(REAL_ENCODED.as_bytes());
+      format!("sha256={}", hex::encode(mac.finalize().into_bytes()))
+    };
+    h.insert("X-Hub-Signature-256", HeaderValue::from_str(&sig).unwrap());
+
+    // Signing the decoded body must not verify -- the signature covers the
+    // raw wire bytes, so decoding must stay strictly after verification.
+    assert!(verify_signature(secret, &h, REAL_ENCODED.as_bytes()));
+    let decoded = decode_form_payload(&headers(FORM), REAL_ENCODED.as_bytes()).unwrap();
+    assert!(!verify_signature(secret, &h, &decoded));
+  }
 }
 
 #[tokio::main]

@@ -15,4 +15,5 @@ tower-http = { version = "0.5", features = ["trace"] }
 once_cell = "1.18"
 syslog = "7.0"
 log = "0.4"
+form_urlencoded = "1"
 
